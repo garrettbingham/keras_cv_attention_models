@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import json
+import wandb
 from keras_cv_attention_models.imagenet import data, train_func, losses
 
 
@@ -110,6 +111,13 @@ def parse_arguments(argv):
     dt_group.add_argument("--distill_temperature", type=float, default=10, help="Temperature for DistillKLDivergenceLoss")
     dt_group.add_argument("--distill_loss_weight", type=float, default=1, help="Distill loss weight if `teacher_model` is not None")
 
+    """ Weights and Biases """
+    wandb_group = parser.add_argument_group("W&B arguments")
+    wandb_group.add_argument('--wandb-project', type=str, default='mobilevit')
+    wandb_group.add_argument('--wandb-group', type=str, required=False)
+    wandb_group.add_argument('--wandb-name', type=str, required=False)
+    wandb_group.add_argument('--wandb-mode', type=str, required=False, help='online, offline, dryrun, or disabled')
+
     args = parser.parse_known_args(argv)[0]
 
     # args.additional_model_kwargs = {"drop_connect_rate": 0.05}
@@ -143,6 +151,13 @@ def parse_arguments(argv):
 def run_training_by_args(args):
     print(">>>> ALl args:", args)
     # return None, None, None
+
+    wandb_run = wandb.init(config=args,
+                           project=args.wandb_project,
+                           group=args.wandb_group,
+                           name=args.wandb_name,
+                           mode=args.wandb_mode,
+                           reinit=True)
 
     strategy = train_func.init_global_strategy(args.enable_float16, args.seed, args.TPU)
     batch_size = args.batch_size * strategy.num_replicas_in_sync

@@ -5,6 +5,7 @@ import tensorflow as tf
 from tensorflow import keras
 from keras_cv_attention_models.imagenet import callbacks, losses
 from keras_cv_attention_models import model_surgery
+from wandb.keras import WandbCallback
 
 GLOBAL_STRATEGY = None
 
@@ -237,6 +238,8 @@ def train(compiled_model, epochs, train_dataset, test_dataset=None, initial_epoc
         lr_base, wd_base = compiled_model.optimizer.lr.numpy(), compiled_model.optimizer.weight_decay.numpy()
         wd_callback = callbacks.OptimizerWeightDecay(lr_base, wd_base, is_lr_on_batch=is_lr_on_batch)
         cur_callbacks.append(wd_callback)  # should be after lr_scheduler
+
+    cur_callbacks.append(WandbCallback(save_model=False))
 
     hist = compiled_model.fit(
         train_dataset,
