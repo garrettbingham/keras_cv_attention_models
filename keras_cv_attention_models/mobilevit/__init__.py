@@ -1,5 +1,6 @@
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 from keras_cv_attention_models.mobilevit.mobilevit import MobileViT, MobileViT_XXS, MobileViT_XS, MobileViT_S, linear_self_attention
 from keras_cv_attention_models.mobilevit.mobilevit_v2 import (
     MobileViT_V2,
@@ -11,6 +12,9 @@ from keras_cv_attention_models.mobilevit.mobilevit_v2 import (
     MobileViT_V2_175,
     MobileViT_V2_200,
 )
+=======
+from keras_cv_attention_models.mobilevit.mobilevit import MobileViT, MobileViT_XXS, MobileViT_XS, MobileViT_S, MobileViT_CIFAR
+>>>>>>> Stashed changes
 =======
 from keras_cv_attention_models.mobilevit.mobilevit import MobileViT, MobileViT_XXS, MobileViT_XS, MobileViT_S, MobileViT_CIFAR
 >>>>>>> Stashed changes
