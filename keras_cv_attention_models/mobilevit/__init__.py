@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 from keras_cv_attention_models.mobilevit.mobilevit import MobileViT, MobileViT_XXS, MobileViT_XS, MobileViT_S, linear_self_attention
 from keras_cv_attention_models.mobilevit.mobilevit_v2 import (
     MobileViT_V2,
@@ -9,6 +10,9 @@ from keras_cv_attention_models.mobilevit.mobilevit_v2 import (
     MobileViT_V2_175,
     MobileViT_V2_200,
 )
+=======
+from keras_cv_attention_models.mobilevit.mobilevit import MobileViT, MobileViT_XXS, MobileViT_XS, MobileViT_S, MobileViT_CIFAR
+>>>>>>> Stashed changes
 
 __v1_head_doc__ = """
 Keras implementation of [Github apple/ml-cvnets/mobilevit](https://github.com/apple/ml-cvnets/blob/main/cvnets/models/classification/mobilevit.py).
