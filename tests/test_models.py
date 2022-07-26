@@ -319,7 +319,7 @@ def test_LeViT128S_predict():
 
 
 def test_LeViT128S_new_shape_predict():
-    mm = keras_cv_attention_models.levit.LeViT128S(input_shape=(320, 320, 3), pretrained="imagenet")
+    mm = keras_cv_attention_models.levit.LeViT128S(input_shape=(292, 213, 3), pretrained="imagenet")
     pred = mm(mm.preprocess_input(chelsea()))  # Chelsea the cat
     pred = (pred[0] + pred[1]) / 2
     out = mm.decode_predictions(pred)[0][0]
@@ -345,6 +345,14 @@ def test_MobileNetV3Small075_dynamic_predict():
 
 def test_MobileViT_XXS_predict():
     mm = keras_cv_attention_models.mobilevit.MobileViT_XXS(pretrained="imagenet")
+    pred = mm(mm.preprocess_input(chelsea()))  # Chelsea the cat
+    out = mm.decode_predictions(pred)[0][0]
+
+    assert out[1] == "Egyptian_cat"
+
+
+def test_MobileViT_V2_050_predict():
+    mm = keras_cv_attention_models.mobilevit.MobileViT_V2_050(input_shape=(112, 157, 3), pretrained="imagenet")
     pred = mm(mm.preprocess_input(chelsea()))  # Chelsea the cat
     out = mm.decode_predictions(pred)[0][0]
 
@@ -386,6 +394,15 @@ def test_VOLO_d2_new_shape_predict():
 def test_WaveMLP_T_dynamic_predict():
     mm = keras_cv_attention_models.wave_mlp.WaveMLP_T(input_shape=(None, None, 3), pretrained="imagenet")
     pred = mm(mm.preprocess_input(chelsea(), input_shape=[320, 320, 3]))  # Chelsea the cat
+    out = mm.decode_predictions(pred)[0][0]
+
+    assert out[1] == "Egyptian_cat"
+
+
+def test_EfficientFormerL1_new_shape_predict():
+    mm = keras_cv_attention_models.efficientformer.EfficientFormerL1(input_shape=(292, 213, 3), pretrained="imagenet")
+    pred = mm(mm.preprocess_input(chelsea()))  # Chelsea the cat
+    pred = (pred[0] + pred[1]) / 2
     out = mm.decode_predictions(pred)[0][0]
 
     assert out[1] == "Egyptian_cat"
