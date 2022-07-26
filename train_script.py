@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import json
+import uuid
 import wandb
 from keras_cv_attention_models.imagenet import data, train_func, losses
 
@@ -140,6 +141,8 @@ def parse_arguments(argv):
         basic_save_name = "{}_{}_{}_{}_batchsize_{}".format(args.model, args.input_shape, args.optimizer, data_name, args.batch_size)
         basic_save_name += "_randaug_{}_mixup_{}_cutmix_{}_RRC_{}".format(args.magnitude, args.mixup_alpha, args.cutmix_alpha, args.random_crop_min)
         basic_save_name += "_lr512_{}_wd_{}".format(args.lr_base_512, args.weight_decay)
+        # append random string to avoid collision
+        basic_save_name += "_" + uuid.uuid4().hex[:6]
         args.basic_save_name = basic_save_name if args.basic_save_name is None else (basic_save_name + args.basic_save_name)
     args.enable_float16 = not args.disable_float16
     args.tensorboard_logs = None if args.tensorboard_logs is None or args.tensorboard_logs.lower() == "none" else args.tensorboard_logs
