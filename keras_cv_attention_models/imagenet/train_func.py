@@ -2,6 +2,7 @@ import os
 import time
 import keras_cv_attention_models
 import tensorflow as tf
+import tensorflow_addons as tfa
 from tensorflow import keras
 from keras_cv_attention_models.imagenet import callbacks, losses
 from keras_cv_attention_models import model_surgery
@@ -42,11 +43,15 @@ def init_global_strategy(enable_float16=True, seed=0, TPU=False):
     return strategy
 
 
-def init_lr_scheduler(lr_base, lr_decay_steps, lr_min=1e-5, lr_decay_on_batch=False, lr_warmup=1e-4, warmup_steps=0, cooldown_steps=0, t_mul=2, m_mul=0.5):
+def init_lr_scheduler(lr_base, lr_decay_steps, lr_min=1e-5, lr_decay_on_batch=False, lr_warmup=1e-4, warmup_steps=0, cooldown_steps=0, t_mul=2, m_mul=0.5, linear_decay=False):
     if isinstance(lr_decay_steps, list):
         constant_lr_sch = lambda epoch: callbacks.constant_scheduler(epoch, lr_base=lr_base, lr_decay_steps=lr_decay_steps, warmup_steps=warmup_steps)
         lr_scheduler = keras.callbacks.LearningRateScheduler(constant_lr_sch)
         lr_total_epochs = lr_decay_steps[-1] + cooldown_steps  # 120 for lr_decay_steps=[30, 60, 90], warmup_steps=4, cooldown_steps=30
+    elif linear_decay:
+        linear_decay_sch = lambda epoch: callbacks.linear_decay(epoch, lr_base, lr_decay_steps, warmup_steps)
+        lr_scheduler = keras.callbacks.LearningRateScheduler(linear_decay_sch)
+        lr_total_epochs = warmup_steps + lr_decay_steps
     elif lr_decay_on_batch:
         lr_scheduler = callbacks.CosineLrScheduler(
             lr_base, lr_decay_steps, m_mul=m_mul, t_mul=t_mul, lr_min=lr_min, lr_warmup=lr_warmup, warmup_steps=warmup_steps, cooldown_steps=cooldown_steps
@@ -116,7 +121,17 @@ def init_loss(bce_threshold=1.0, label_smoothing=0, token_label_loss_weight=0, d
     return loss, loss_weights, metrics
 
 
-def init_model(model=None, input_shape=(224, 224, 3), num_classes=1000, pretrained=None, reload_compile=True, **kwargs):
+def init_model(model=None,
+               input_shape=(224, 224, 3),
+               num_classes=1000,
+               pretrained=None,
+               reload_compile=True,
+               autoinit=False,
+               autoinit_signal_variance=None,
+               remove_norm_layers=False,
+               replace_add_with_weighted_sum=False,
+               activation_fn=None,
+               **kwargs):
     """model Could be:
     1. Saved h5 model path.
     2. Model name defined in this repo, format [sub_dir].[model_name] like regnet.RegNetZD8.
@@ -158,6 +173,25 @@ def init_model(model=None, input_shape=(224, 224, 3), num_classes=1000, pretrain
         # Currently aotnet not loading from pretrained...
         print(">>>> Load pretrained from:", pretrained)
         model.load_weights(pretrained, by_name=True, skip_mismatch=True)
+
+    if remove_norm_layers:
+        print(">>>> Removing normalization layers")
+        model = model_surgery.remove_norm_layers(model)
+
+    if replace_add_with_weighted_sum:
+        print(">>>> Replacing Add with WeightedSum")
+        model = model_surgery.replace_add_with_weighted_sum(model)
+
+    if activation_fn is not None:
+        print(">>>> Setting activation function to:", activation_fn)
+        model = model_surgery.set_activation_fn(model, activation_fn)
+
+    if autoinit:
+        autoinit_signal_variance = autoinit_signal_variance or 1.0
+        print(f">>>> Initializing with AutoInit (signal variance {autoinit_signal_variance})")
+        from autoinit import AutoInit
+        from autoinit.components.weighted_sum import WeightedSum
+        model = AutoInit(signal_variance=autoinit_signal_variance).initialize_model(model, custom_objects={'WeightedSum': WeightedSum})
     return model
 
 
@@ -169,7 +203,8 @@ def model_post_process(model, freeze_backbone=False, freeze_norm_layers=False, u
 
     if freeze_norm_layers:
         for ii in model.layers:
-            if isinstance(ii, keras.layers.BatchNormalization) or isinstance(ii, keras.layers.LayerNormalization):
+            # not the same as removing from graph because autoinit thinks it is still there
+            if isinstance(ii, keras.layers.BatchNormalization) or isinstance(ii, keras.layers.LayerNormalization) or isinstance(ii, tfa.layers.GroupNormalization):
                 ii.trainable = False
 
     if use_token_label and model.optimizer is None:  # model.optimizer is not None if restored from h5

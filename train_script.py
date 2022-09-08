@@ -15,6 +15,7 @@ def parse_arguments(argv):
     parser.add_argument(
         "-m", "--model", type=str, default="aotnet.AotNet50", help="Model name in format [sub_dir].[model_name]. Or keras.applications name like MobileNet"
     )
+    parser.add_argument('--activation-fn', type=str, required=False, help='Custom DAG activation function')
     parser.add_argument("-b", "--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("-e", "--epochs", type=int, default=-1, help="Total epochs. Set -1 means using lr_decay_steps + lr_cooldown_steps")
     parser.add_argument("-p", "--optimizer", type=str, default="LAMB", help="Optimizer name. One of [AdamW, LAMB, RMSprop, SGD, SGDW].")
@@ -42,6 +43,8 @@ def parse_arguments(argv):
     parser.add_argument("--seed", type=int, default=None, help="Set random seed if not None")
     parser.add_argument("--freeze_backbone", action="store_true", help="Freeze backbone, set layer.trainable=False till model GlobalAveragePooling2D layer")
     parser.add_argument("--freeze_norm_layers", action="store_true", help="Set layer.trainable=False for BatchNormalization and LayerNormalization")
+    parser.add_argument('--remove-norm-layers', action='store_true', help='Remove BatchNormalization, LayerNormalization, and GroupNormalization layers.')
+    parser.add_argument('--replace-add-with-weighted-sum', action='store_true', help='Replace Add with WeightedSum.')
     parser.add_argument("--disable_float16", action="store_true", help="Disable mixed_float16 training")
     parser.add_argument("--summary", action="store_true", help="show model summary")
     parser.add_argument(
@@ -51,6 +54,8 @@ def parse_arguments(argv):
         help="TensorBoard logs saving path, default None for disable. Set auto for `logs/{basic_save_name} + _ + timestamp`.",
     )
     parser.add_argument("--TPU", action="store_true", help="Run training on TPU. Will set True for dataset `try_gcs` and `drop_remainder`")
+    parser.add_argument('--autoinit', action='store_true', help='Initialize the model with AutoInit')
+    parser.add_argument('--autoinit-signal-variance', type=float, default=1.0, help='Signal variance for AutoInit to maintain')
 
     """ Loss arguments """
     loss_group = parser.add_argument_group("Loss arguments")
@@ -81,6 +86,8 @@ def parse_arguments(argv):
     lr_group.add_argument("--lr_min", type=float, default=1e-6, help="Learning rate minimum value")
     lr_group.add_argument("--lr_t_mul", type=float, default=2, help="For CosineDecayRestarts, derive the number of iterations in the i-th period")
     lr_group.add_argument("--lr_m_mul", type=float, default=0.5, help="For CosineDecayRestarts, derive the initial learning rate of the i-th period")
+    lr_group.add_argument('--lr-scale', type=float, default=1, help='Multiply the learning rate by this value. Scales --lr_warmup, --lr_base_512, and --lr_min.')
+    lr_group.add_argument('--lr-linear-decay', action='store_true', help='Use a linear decay schedule instead of cosine decay for the learning rate.')
     lr_group.add_argument("--momentum", type=float, default=0.9, help="Momentum for SGD / SGDW / RMSprop optimizer")
 
     """ Dataset parameters """
@@ -114,7 +121,7 @@ def parse_arguments(argv):
 
     """ Weights and Biases """
     wandb_group = parser.add_argument_group("W&B arguments")
-    wandb_group.add_argument('--wandb-project', type=str, default='mobilevit')
+    wandb_group.add_argument('--wandb-project', type=str, default='kecam')
     wandb_group.add_argument('--wandb-group', type=str, required=False)
     wandb_group.add_argument('--wandb-name', type=str, required=False)
     wandb_group.add_argument('--wandb-mode', type=str, required=False, help='online, offline, dryrun, or disabled')
@@ -124,6 +131,11 @@ def parse_arguments(argv):
     # args.additional_model_kwargs = {"drop_connect_rate": 0.05}
     args.additional_model_kwargs = json.loads(args.additional_model_kwargs) if args.additional_model_kwargs else {}
 
+    # Scale learning rate schedule
+    args.lr_warmup *= args.lr_scale
+    args.lr_base_512 *= args.lr_scale
+    args.lr_min *= args.lr_scale
+    
     lr_decay_steps = args.lr_decay_steps.strip().split(",")
     if len(lr_decay_steps) > 1:
         # Constant decay steps
@@ -176,7 +188,17 @@ def run_training_by_args(args):
     assert not (num_channels != 3 and args.rescale_mode == "torch")  # "torch" mode mean and std are 3 channels
     with strategy.scope():
         model = args.model if args.restore_path is None else args.restore_path
-        model = train_func.init_model(model, input_shape, num_classes, args.pretrained, **args.additional_model_kwargs)
+        model = train_func.init_model(
+            model,
+            input_shape,
+            num_classes,
+            args.pretrained,
+            autoinit=args.autoinit,
+            autoinit_signal_variance=args.autoinit_signal_variance,
+            remove_norm_layers=args.remove_norm_layers,
+            replace_add_with_weighted_sum=args.replace_add_with_weighted_sum,
+            activation_fn=args.activation_fn,
+            **args.additional_model_kwargs)
         model = train_func.model_post_process(model, args.freeze_backbone, args.freeze_norm_layers, use_token_label)
         if args.summary:
             model.summary()
@@ -215,24 +237,27 @@ def run_training_by_args(args):
     lr_base = args.lr_base_512 * batch_size / 512
     warmup_steps, cooldown_steps, t_mul, m_mul = args.lr_warmup_steps, args.lr_cooldown_steps, args.lr_t_mul, args.lr_m_mul  # Save line-width
     lr_scheduler, lr_total_epochs = train_func.init_lr_scheduler(
-        lr_base, args.lr_decay_steps, args.lr_min, args.lr_decay_on_batch, args.lr_warmup, warmup_steps, cooldown_steps, t_mul, m_mul
+        lr_base, args.lr_decay_steps, args.lr_min, args.lr_decay_on_batch, args.lr_warmup, warmup_steps, cooldown_steps, t_mul, m_mul, args.lr_linear_decay
     )
     epochs = args.epochs if args.epochs != -1 else lr_total_epochs
 
-    with strategy.scope():
-        token_label_loss_weight = args.token_label_loss_weight if use_token_label else 0
-        distill_loss_weight = args.distill_loss_weight if use_teacher_model else 0
-        loss, loss_weights, metrics = train_func.init_loss(
-            args.bce_threshold, args.label_smoothing, token_label_loss_weight, distill_loss_weight, args.distill_temperature, model.output_names
-        )
+    try:
+        with strategy.scope():
+            token_label_loss_weight = args.token_label_loss_weight if use_token_label else 0
+            distill_loss_weight = args.distill_loss_weight if use_teacher_model else 0
+            loss, loss_weights, metrics = train_func.init_loss(
+                args.bce_threshold, args.label_smoothing, token_label_loss_weight, distill_loss_weight, args.distill_temperature, model.output_names
+            )
 
-        if model.optimizer is None:
-            model = train_func.compile_model(model, args.optimizer, lr_base, args.weight_decay, loss, loss_weights, metrics, args.momentum)
-        print(">>>> basic_save_name =", args.basic_save_name)
-        # return None, None, None
-        latest_save, hist = train_func.train(
-            model, epochs, train_dataset, test_dataset, args.initial_epoch, lr_scheduler, args.basic_save_name, logs=args.tensorboard_logs
-        )
+            if model.optimizer is None:
+                model = train_func.compile_model(model, args.optimizer, lr_base, args.weight_decay, loss, loss_weights, metrics, args.momentum)
+            print(">>>> basic_save_name =", args.basic_save_name)
+            # return None, None, None
+            latest_save, hist = train_func.train(
+                model, epochs, train_dataset, test_dataset, args.initial_epoch, lr_scheduler, args.basic_save_name, logs=args.tensorboard_logs
+            )
+    except IndexError:
+        print(">>>> IndexError")
     return model, latest_save, hist
 
 

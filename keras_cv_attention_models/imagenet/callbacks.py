@@ -131,6 +131,15 @@ def exp_scheduler(epoch, lr_base=0.1, decay_step=1, decay_rate=0.9, lr_min=0, wa
     return lr
 
 
+def linear_decay(epoch, lr_base, lr_decay_steps, warmup_steps=0):
+    if epoch < warmup_steps:
+        lr = lr_base * (epoch + 1) / warmup_steps
+    else:
+        lr = lr_base - lr_base * (epoch + 1 - warmup_steps) / (lr_decay_steps + 1)
+    print("\nLearning rate for iter {} is {}".format(epoch + 1, lr))
+    return lr
+
+
 class OptimizerWeightDecay(keras.callbacks.Callback):
     def __init__(self, lr_base, wd_base, is_lr_on_batch=False):
         super(OptimizerWeightDecay, self).__init__()

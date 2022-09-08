@@ -589,3 +589,44 @@ def prepare_for_tflite(model):
     model = convert_groups_conv2d_2_split_conv2d(model)
     model = convert_gelu_and_extract_patches_for_tflite(model)
     return model
+
+
+def remove_norm_layers(model):
+    from tensorflow.keras.layers import Activation, BatchNormalization, LayerNormalization
+    from tensorflow_addons.layers import GroupNormalization
+    def __remove_norm_layers__(layer):
+        if isinstance(layer, (BatchNormalization, LayerNormalization, GroupNormalization)):
+            return Activation('linear')
+        return layer
+    input_tensors = keras.layers.Input(model.input_shape[1:])
+    return keras.models.clone_model(model, input_tensors=model.inputs, clone_function=__remove_norm_layers__)
+
+
+def replace_add_with_weighted_sum(model):
+    from tensorflow.keras.layers import Add
+    from autoinit.components.weighted_sum import WeightedSum
+    def __replace_add_with_weighted_sum__(layer):
+        if isinstance(layer, Add):
+            num_inputs = len(layer.input)
+            return WeightedSum(coefficients=[1.0 for _ in range(num_inputs)])
+        return layer
+    input_tensors = keras.layers.Input(model.input_shape[1:])
+    return keras.models.clone_model(model, input_tensors=model.inputs, clone_function=__replace_add_with_weighted_sum__)
+
+def set_activation_fn(model, activation_fn):
+    import os, sys
+    WORKSPACE_PATH = os.path.join('/', 'home', 'garrett', 'workspace')
+    sys.path.append(WORKSPACE_PATH)
+    from notferratu.activations.dag import ActivationFunction
+
+    def __set_activation_fn__(layer):
+        if isinstance(layer, keras.layers.Activation):
+            # We don't want to replace linear or softmax layers
+            if layer.activation.__name__ != 'linear' and layer.activation.__name__ != 'softmax':
+                return ActivationFunction(activation_fn)
+        elif hasattr(layer, "activation"):
+            assert layer.activation.__name__ == "linear", \
+                "Activation functions must be separated from the Layer objects"
+        return layer
+    input_tensors = keras.layers.Input(model.input_shape[1:])
+    return keras.models.clone_model(model, input_tensors=model.inputs, clone_function=__set_activation_fn__)
