@@ -227,7 +227,7 @@ def group_norm(inputs, groups=32, epsilon=BATCH_NORM_EPSILON, name=None):
     return GroupNormalization(groups=groups, axis=norm_axis, epsilon=epsilon, name=name and name + "group_norm")(inputs)
 
 
-def conv2d_no_bias(inputs, filters, kernel_size=1, strides=1, padding="VALID", use_bias=False, groups=1, use_torch_padding=True, name=None, **kwargs):
+def conv2d_no_bias(inputs, filters, kernel_size=1, strides=1, padding="VALID", use_bias=False, groups=1, use_torch_padding=True, name=None, kernel_initializer=None, **kwargs):
     """Typical Conv2D with `use_bias` default as `False` and fixed padding"""
     pad = (kernel_size[0] // 2, kernel_size[1] // 2) if isinstance(kernel_size, (list, tuple)) else (kernel_size // 2, kernel_size // 2)
     if use_torch_padding and padding.upper() == "SAME" and max(pad) != 0:
@@ -235,6 +235,7 @@ def conv2d_no_bias(inputs, filters, kernel_size=1, strides=1, padding="VALID", u
         padding = "VALID"
 
     groups = max(1, groups)
+    kernel_initializer = kernel_initializer or CONV_KERNEL_INITIALIZER
     return keras.layers.Conv2D(
         filters,
         kernel_size,
@@ -242,24 +243,25 @@ def conv2d_no_bias(inputs, filters, kernel_size=1, strides=1, padding="VALID", u
         padding=padding,
         use_bias=use_bias,
         groups=groups,
-        kernel_initializer=CONV_KERNEL_INITIALIZER,
+        kernel_initializer=kernel_initializer,
         name=name and name + "conv",
         **kwargs,
     )(inputs)
 
 
-def depthwise_conv2d_no_bias(inputs, kernel_size, strides=1, padding="VALID", use_bias=False, use_torch_padding=True, name=None, **kwargs):
+def depthwise_conv2d_no_bias(inputs, kernel_size, strides=1, padding="VALID", use_bias=False, use_torch_padding=True, name=None, kernel_initializer=None, **kwargs):
     """Typical DepthwiseConv2D with `use_bias` default as `False` and fixed padding"""
     pad = (kernel_size[0] // 2, kernel_size[1] // 2) if isinstance(kernel_size, (list, tuple)) else (kernel_size // 2, kernel_size // 2)
     if use_torch_padding and padding.upper() == "SAME" and max(pad) != 0:
         inputs = keras.layers.ZeroPadding2D(padding=pad, name=name and name + "dw_pad")(inputs)
         padding = "VALID"
+    kernel_initializer = kernel_initializer or CONV_KERNEL_INITIALIZER
     return keras.layers.DepthwiseConv2D(
         kernel_size,
         strides=strides,
         padding=padding,
         use_bias=use_bias,
-        kernel_initializer=CONV_KERNEL_INITIALIZER,
+        depthwise_initializer=kernel_initializer,
         name=name and name + "dw_conv",
         **kwargs,
     )(inputs)
@@ -268,22 +270,23 @@ def depthwise_conv2d_no_bias(inputs, kernel_size, strides=1, padding="VALID", us
 """ Blocks """
 
 
-def output_block(inputs, filters=0, activation="relu", num_classes=1000, drop_rate=0, classifier_activation="softmax", is_torch_mode=True, act_first=False):
+def output_block(inputs, filters=0, activation="relu", num_classes=1000, drop_rate=0, classifier_activation="softmax", is_torch_mode=True, act_first=False, kernel_initializer=None):
     nn = inputs
     if filters > 0:  # efficientnet like
         bn_eps = BATCH_NORM_EPSILON if is_torch_mode else TF_BATCH_NORM_EPSILON
-        nn = conv2d_no_bias(nn, filters, 1, strides=1, use_bias=act_first, use_torch_padding=is_torch_mode, name="features_")  # Also use_bias for act_first
+        nn = conv2d_no_bias(nn, filters, 1, strides=1, use_bias=act_first, use_torch_padding=is_torch_mode, name="features_", kernel_initializer=kernel_initializer)  # Also use_bias for act_first
         nn = batchnorm_with_activation(nn, activation=activation, act_first=act_first, epsilon=bn_eps, name="features_")
 
     if num_classes > 0:
         nn = keras.layers.GlobalAveragePooling2D(name="avg_pool")(nn)
         if drop_rate > 0:
             nn = keras.layers.Dropout(drop_rate, name="head_drop")(nn)
-        nn = keras.layers.Dense(num_classes, dtype="float32", activation=classifier_activation, name="predictions")(nn)
+        nn = keras.layers.Dense(num_classes, dtype="float32", activation=None, name="predictions", kernel_initializer=kernel_initializer)(nn)
+        nn = keras.layers.Activation(classifier_activation, name="predictions_activation")(nn)
     return nn
 
 
-def global_context_module(inputs, use_attn=True, ratio=0.25, divisor=1, activation="relu", use_bias=True, name=None):
+def global_context_module(inputs, use_attn=True, ratio=0.25, divisor=1, activation="relu", use_bias=True, name=None, kernel_initializer=None):
     """Global Context Attention Block, arxiv: https://arxiv.org/pdf/1904.11492.pdf"""
     height, width, filters = inputs.shape[1], inputs.shape[2], inputs.shape[-1]
 
@@ -291,8 +294,9 @@ def global_context_module(inputs, use_attn=True, ratio=0.25, divisor=1, activati
     hidden_activation, output_activation = activation if isinstance(activation, (list, tuple)) else (activation, "sigmoid")
     reduction = make_divisible(filters * ratio, divisor, limit_round_down=0.0)
 
+    kernel_initializer = kernel_initializer or CONV_KERNEL_INITIALIZER
     if use_attn:
-        attn = keras.layers.Conv2D(1, kernel_size=1, use_bias=use_bias, kernel_initializer=CONV_KERNEL_INITIALIZER, name=name and name + "attn_conv")(inputs)
+        attn = keras.layers.Conv2D(1, kernel_size=1, use_bias=use_bias, kernel_initializer=kernel_initializer, name=name and name + "attn_conv")(inputs)
         attn = tf.reshape(attn, [-1, 1, 1, height * width])  # [batch, height, width, 1] -> [batch, 1, 1, height * width]
         attn = tf.nn.softmax(attn, axis=-1)
         context = tf.reshape(inputs, [-1, 1, height * width, filters])
@@ -300,15 +304,15 @@ def global_context_module(inputs, use_attn=True, ratio=0.25, divisor=1, activati
     else:
         context = tf.reduce_mean(inputs, [1, 2], keepdims=True)
 
-    mlp = keras.layers.Conv2D(reduction, kernel_size=1, use_bias=use_bias, name=name and name + "mlp_1_conv")(context)
+    mlp = keras.layers.Conv2D(reduction, kernel_size=1, use_bias=use_bias, name=name and name + "mlp_1_conv", kernel_initializer=kernel_initializer)(context)
     mlp = keras.layers.LayerNormalization(epsilon=LAYER_NORM_EPSILON, name=name and name + "ln")(mlp)
     mlp = activation_by_name(mlp, activation=hidden_activation, name=name)
-    mlp = keras.layers.Conv2D(filters, kernel_size=1, use_bias=use_bias, name=name and name + "mlp_2_conv")(mlp)
+    mlp = keras.layers.Conv2D(filters, kernel_size=1, use_bias=use_bias, name=name and name + "mlp_2_conv", kernel_initializer=kernel_initializer)(mlp)
     mlp = activation_by_name(mlp, activation=output_activation, name=name)
     return keras.layers.Multiply(name=name and name + "out")([inputs, mlp])
 
 
-def se_module(inputs, se_ratio=0.25, divisor=8, limit_round_down=0.9, activation="relu", use_bias=True, use_conv=True, name=None):
+def se_module(inputs, se_ratio=0.25, divisor=8, limit_round_down=0.9, activation="relu", use_bias=True, use_conv=True, name=None, kernel_initializer=None):
     """Squeeze-and-Excitation block, arxiv: https://arxiv.org/pdf/1709.01507.pdf"""
     channel_axis = 1 if K.image_data_format() == "channels_first" else -1
     h_axis, w_axis = [2, 3] if K.image_data_format() == "channels_first" else [1, 2]
@@ -319,15 +323,16 @@ def se_module(inputs, se_ratio=0.25, divisor=8, limit_round_down=0.9, activation
     reduction = make_divisible(filters * se_ratio, divisor, limit_round_down=limit_round_down)
     # print(f"{filters = }, {se_ratio = }, {divisor = }, {reduction = }")
     se = tf.reduce_mean(inputs, [h_axis, w_axis], keepdims=True)
+    kernel_initializer = kernel_initializer or CONV_KERNEL_INITIALIZER
     if use_conv:
-        se = keras.layers.Conv2D(reduction, kernel_size=1, use_bias=use_bias, kernel_initializer=CONV_KERNEL_INITIALIZER, name=name and name + "1_conv")(se)
+        se = keras.layers.Conv2D(reduction, kernel_size=1, use_bias=use_bias, kernel_initializer=kernel_initializer, name=name and name + "1_conv")(se)
     else:
-        se = keras.layers.Dense(reduction, use_bias=use_bias, kernel_initializer=CONV_KERNEL_INITIALIZER, name=name and name + "1_dense")(se)
+        se = keras.layers.Dense(reduction, use_bias=use_bias, kernel_initializer=kernel_initializer, name=name and name + "1_dense")(se)
     se = activation_by_name(se, activation=hidden_activation, name=name)
     if use_conv:
-        se = keras.layers.Conv2D(filters, kernel_size=1, use_bias=use_bias, kernel_initializer=CONV_KERNEL_INITIALIZER, name=name and name + "2_conv")(se)
+        se = keras.layers.Conv2D(filters, kernel_size=1, use_bias=use_bias, kernel_initializer=kernel_initializer, name=name and name + "2_conv")(se)
     else:
-        se = keras.layers.Dense(filters, use_bias=use_bias, kernel_initializer=CONV_KERNEL_INITIALIZER, name=name and name + "2_dense")(se)
+        se = keras.layers.Dense(filters, use_bias=use_bias, kernel_initializer=kernel_initializer, name=name and name + "2_dense")(se)
     se = activation_by_name(se, activation=output_activation, name=name)
     return keras.layers.Multiply(name=name and name + "out")([inputs, se])
 

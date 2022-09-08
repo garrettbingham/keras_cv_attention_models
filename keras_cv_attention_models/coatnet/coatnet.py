@@ -18,7 +18,7 @@ PRETRAINED_DICT = {"coatnet0": {"imagenet": {160: "bc4375d2f03b99ac4252770331f0d
 
 
 def mhsa_with_multi_head_relative_position_embedding(
-    inputs, num_heads=4, key_dim=0, global_query=None, out_shape=None, out_weight=True, qkv_bias=False, out_bias=False, attn_dropout=0, name=None
+    inputs, num_heads=4, key_dim=0, global_query=None, out_shape=None, out_weight=True, qkv_bias=False, out_bias=False, attn_dropout=0, name=None, kernel_initializer=None,
 ):
     _, hh, ww, cc = inputs.shape
     key_dim = key_dim if key_dim > 0 else cc // num_heads
@@ -29,14 +29,14 @@ def mhsa_with_multi_head_relative_position_embedding(
     vv_dim = key_dim
 
     if global_query is not None:
-        kv = conv2d_no_bias(inputs, qk_out * 2, kernel_size=1, use_bias=qkv_bias, name=name and name + "kv_")
+        kv = conv2d_no_bias(inputs, qk_out * 2, kernel_size=1, use_bias=qkv_bias, name=name and name + "kv_", kernel_initializer=kernel_initializer)
         kv = tf.reshape(kv, [-1, kv.shape[1] * kv.shape[2], kv.shape[-1]])
         key, value = tf.split(kv, [qk_out, out_shape], axis=-1)
         query = global_query
     else:
         # qkv = keras.layers.Dense(emb_dim * 3, use_bias=qkv_bias, name=name and name + "qkv")(inputs)
         # qkv = conv2d_no_bias(inputs, qk_out * 2 + out_shape, kernel_size=1, name=name and name + "qkv_")
-        qkv = conv2d_no_bias(inputs, qk_out * 3, kernel_size=1, use_bias=qkv_bias, name=name and name + "qkv_")
+        qkv = conv2d_no_bias(inputs, qk_out * 3, kernel_size=1, use_bias=qkv_bias, name=name and name + "qkv_", kernel_initializer=kernel_initializer)
         qkv = tf.reshape(qkv, [-1, inputs.shape[1] * inputs.shape[2], qkv.shape[-1]])
         query, key, value = tf.split(qkv, [qk_out, qk_out, qk_out], axis=-1)
         # print(f"{query.shape = }, {key.shape = }, {value.shape = }, {num_heads = }, {key_dim = }, {vv_dim = }")
@@ -44,21 +44,22 @@ def mhsa_with_multi_head_relative_position_embedding(
     key = tf.transpose(tf.reshape(key, [-1, key.shape[1], num_heads, key_dim]), [0, 2, 3, 1])  # [batch, num_heads, key_dim, hh * ww]
     value = tf.transpose(tf.reshape(value, [-1, value.shape[1], num_heads, vv_dim]), [0, 2, 1, 3])  # [batch, num_heads, hh * ww, vv_dim]
 
-    attention_scores = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]))([query, key]) * qk_scale  # [batch, num_heads, hh * ww, hh * ww]
+    # attention_scores = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]), name=name and name + 'tf.matmul_0')([query, key]) * qk_scale  # [batch, num_heads, hh * ww, hh * ww]
+    attention_scores = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]) * qk_scale, name=name and name + f'tf.matmul_x_{qk_scale}')([query, key])  # [batch, num_heads, hh * ww, hh * ww]
     # print(f"{query.shape = }, {key.shape = }, {value.shape = }, {attention_scores.shape = }, {hh = }")
     attention_scores = MultiHeadRelativePositionalEmbedding(with_cls_token=False, attn_height=hh, name=name and name + "pos_emb")(attention_scores)
     attention_scores = keras.layers.Softmax(axis=-1, name=name and name + "attention_scores")(attention_scores)
     attention_scores = keras.layers.Dropout(attn_dropout, name=name and name + "attn_drop")(attention_scores) if attn_dropout > 0 else attention_scores
 
     # value = [batch, num_heads, hh * ww, vv_dim], attention_output = [batch, num_heads, hh * ww, vv_dim]
-    attention_output = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]))([attention_scores, value])
+    attention_output = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]), name=name and name + 'tf.matmul_1')([attention_scores, value])
     attention_output = tf.transpose(attention_output, perm=[0, 2, 1, 3])
     attention_output = tf.reshape(attention_output, [-1, inputs.shape[1], inputs.shape[2], num_heads * vv_dim])
     # print(f">>>> {attention_output.shape = }, {attention_scores.shape = }")
 
     if out_weight:
         # [batch, hh, ww, num_heads * vv_dim] * [num_heads * vv_dim, out] --> [batch, hh, ww, out]
-        attention_output = keras.layers.Dense(out_shape, use_bias=out_bias, name=name and name + "output")(attention_output)
+        attention_output = keras.layers.Dense(out_shape, use_bias=out_bias, name=name and name + "output", kernel_initializer=kernel_initializer)(attention_output)
     # attention_output = keras.layers.Dropout(output_dropout, name=name and name + "out_drop")(attention_output) if output_dropout > 0 else attention_output
     return attention_output
 
@@ -74,6 +75,7 @@ def res_MBConv(
     use_dw_strides=True,
     bn_act_first=False,
     activation="gelu",
+    kernel_initializer=None,
     name="",
 ):
     """x ← Proj(Pool(x)) + Conv (DepthConv (Conv (Norm(x), stride = 2))))"""
@@ -81,7 +83,7 @@ def res_MBConv(
 
     if conv_short_cut:
         shortcut = keras.layers.MaxPool2D(strides, strides=strides, padding="SAME", name=name + "shortcut_pool")(inputs) if strides > 1 else inputs
-        shortcut = conv2d_no_bias(shortcut, output_channel, 1, strides=1, name=name + "shortcut_")
+        shortcut = conv2d_no_bias(shortcut, output_channel, 1, strides=1, name=name + "shortcut_", kernel_initializer=kernel_initializer)
         # shortcut = batchnorm_with_activation(shortcut, activation=activation, zero_gamma=False, name=name + "shortcut_")
     else:
         shortcut = inputs
@@ -89,40 +91,40 @@ def res_MBConv(
     # MBConv
     input_channel = inputs.shape[-1]
     conv_strides, dw_strides = (1, strides) if use_dw_strides else (strides, 1)  # May swap stirdes with DW
-    nn = conv2d_no_bias(preact, input_channel * expansion, 1, strides=conv_strides, use_bias=bn_act_first, padding="same", name=name + "expand_")
+    nn = conv2d_no_bias(preact, input_channel * expansion, 1, strides=conv_strides, use_bias=bn_act_first, padding="same", name=name + "expand_", kernel_initializer=kernel_initializer)
     nn = batchnorm_with_activation(nn, activation=activation, act_first=bn_act_first, name=name + "expand_")
-    nn = depthwise_conv2d_no_bias(nn, 3, strides=dw_strides, use_bias=bn_act_first, padding="same", name=name + "MB_")
+    nn = depthwise_conv2d_no_bias(nn, 3, strides=dw_strides, use_bias=bn_act_first, padding="same", name=name + "MB_", kernel_initializer=kernel_initializer)
     nn = batchnorm_with_activation(nn, activation=activation, act_first=bn_act_first, zero_gamma=False, name=name + "MB_dw_")
     if se_ratio:
-        nn = se_module(nn, se_ratio=se_ratio / expansion, activation=activation, name=name + "se_")
-    nn = conv2d_no_bias(nn, output_channel, 1, strides=1, padding="same", name=name + "MB_pw_")
+        nn = se_module(nn, se_ratio=se_ratio / expansion, activation=activation, name=name + "se_", kernel_initializer=kernel_initializer)
+    nn = conv2d_no_bias(nn, output_channel, 1, strides=1, padding="same", name=name + "MB_pw_", kernel_initializer=kernel_initializer)
     # nn = batchnorm_with_activation(nn, activation=None, zero_gamma=True, name=name + "MB_pw_")
     nn = drop_block(nn, drop_rate=drop_rate, name=name)
     return keras.layers.Add(name=name + "output")([shortcut, nn])
 
 
-def res_ffn(inputs, expansion=4, kernel_size=1, drop_rate=0, activation="gelu", name=""):
+def res_ffn(inputs, expansion=4, kernel_size=1, drop_rate=0, activation="gelu", name="", kernel_initializer=None):
     """x ← x + Module (Norm(x)), similar with typical MLP block"""
     # preact = batchnorm_with_activation(inputs, activation=None, zero_gamma=False, name=name + "preact_")
     preact = layer_norm(inputs, name=name + "preact_")
 
     input_channel = inputs.shape[-1]
-    nn = conv2d_no_bias(preact, input_channel * expansion, kernel_size, name=name + "1_")
+    nn = conv2d_no_bias(preact, input_channel * expansion, kernel_size, name=name + "1_", kernel_initializer=kernel_initializer)
     nn = activation_by_name(nn, activation=activation, name=name)
-    nn = conv2d_no_bias(nn, input_channel, kernel_size, name=name + "2_")
+    nn = conv2d_no_bias(nn, input_channel, kernel_size, name=name + "2_", kernel_initializer=kernel_initializer)
     nn = drop_block(nn, drop_rate=drop_rate, name=name)
     # return keras.layers.Add(name=name + "output")([preact, nn])
     return keras.layers.Add(name=name + "output")([inputs, nn])
 
 
-def res_mhsa(inputs, output_channel, conv_short_cut=True, strides=1, head_dimension=32, drop_rate=0, activation="gelu", name=""):
+def res_mhsa(inputs, output_channel, conv_short_cut=True, strides=1, head_dimension=32, drop_rate=0, activation="gelu", name="", kernel_initializer=None):
     """x ← Proj(Pool(x)) + Attention (Pool(Norm(x)))"""
     # preact = batchnorm_with_activation(inputs, activation=None, zero_gamma=False, name=name + "preact_")
     preact = layer_norm(inputs, name=name + "preact_")
 
     if conv_short_cut:
         shortcut = keras.layers.MaxPool2D(strides, strides=strides, padding="SAME", name=name + "shortcut_pool")(inputs) if strides > 1 else inputs
-        shortcut = conv2d_no_bias(shortcut, output_channel, 1, strides=1, name=name + "shortcut_")
+        shortcut = conv2d_no_bias(shortcut, output_channel, 1, strides=1, name=name + "shortcut_", kernel_initializer=kernel_initializer)
         # shortcut = batchnorm_with_activation(shortcut, activation=activation, zero_gamma=False, name=name + "shortcut_")
     else:
         shortcut = inputs
@@ -132,7 +134,7 @@ def res_mhsa(inputs, output_channel, conv_short_cut=True, strides=1, head_dimens
         # nn = keras.layers.ZeroPadding2D(padding=1, name=name + "pad")(nn)
         nn = keras.layers.MaxPool2D(pool_size=2, strides=strides, padding="SAME", name=name + "pool")(nn)
     num_heads = nn.shape[-1] // head_dimension
-    nn = mhsa_with_multi_head_relative_position_embedding(nn, num_heads=num_heads, key_dim=head_dimension, out_shape=output_channel, name=name + "mhsa_")
+    nn = mhsa_with_multi_head_relative_position_embedding(nn, num_heads=num_heads, key_dim=head_dimension, out_shape=output_channel, name=name + "mhsa_", kernel_initializer=kernel_initializer)
     nn = drop_block(nn, drop_rate=drop_rate, name=name)
     # print(f"{name = }, {inputs.shape = }, {shortcut.shape = }, {nn.shape = }")
     return keras.layers.Add(name=name + "output")([shortcut, nn])
@@ -157,14 +159,15 @@ def CoAtNet(
     dropout=0,
     pretrained=None,
     model_name="coatnet",
+    kernel_initializer=None,
     kwargs=None,
 ):
     inputs = keras.layers.Input(input_shape)
 
     """ stage 0, Stem_stage """
-    nn = conv2d_no_bias(inputs, stem_width, 3, strides=2, use_bias=bn_act_first, padding="same", name="stem_1_")
+    nn = conv2d_no_bias(inputs, stem_width, 3, strides=2, use_bias=bn_act_first, padding="same", name="stem_1_", kernel_initializer=kernel_initializer)
     nn = batchnorm_with_activation(nn, activation=activation, act_first=bn_act_first, name="stem_1_")
-    nn = conv2d_no_bias(nn, stem_width, 3, strides=1, use_bias=bn_act_first, padding="same", name="stem_2_")
+    nn = conv2d_no_bias(nn, stem_width, 3, strides=1, use_bias=bn_act_first, padding="same", name="stem_2_", kernel_initializer=kernel_initializer)
     # nn = batchnorm_with_activation(nn, activation=activation, name="stem_2_")
 
     """ stage [1, 2, 3, 4] """
@@ -183,13 +186,13 @@ def CoAtNet(
             global_block_id += 1
             if is_conv_block:
                 nn = res_MBConv(
-                    nn, out_channel, conv_short_cut, stride, expansion, block_se_ratio, block_drop_rate, use_dw_strides, bn_act_first, activation, name=name
+                    nn, out_channel, conv_short_cut, stride, expansion, block_se_ratio, block_drop_rate, use_dw_strides, bn_act_first, activation, name=name, kernel_initializer=kernel_initializer,
                 )
             else:
-                nn = res_mhsa(nn, out_channel, conv_short_cut, stride, head_dimension, block_drop_rate, activation=activation, name=name)
-                nn = res_ffn(nn, expansion=expansion, drop_rate=block_drop_rate, activation=activation, name=name + "ffn_")
+                nn = res_mhsa(nn, out_channel, conv_short_cut, stride, head_dimension, block_drop_rate, activation=activation, name=name, kernel_initializer=kernel_initializer)
+                nn = res_ffn(nn, expansion=expansion, drop_rate=block_drop_rate, activation=activation, name=name + "ffn_", kernel_initializer=kernel_initializer)
 
-    nn = output_block(nn, num_classes=num_classes, drop_rate=dropout, classifier_activation=classifier_activation, act_first=bn_act_first)
+    nn = output_block(nn, num_classes=num_classes, drop_rate=dropout, classifier_activation=classifier_activation, act_first=bn_act_first, kernel_initializer=kernel_initializer)
     model = keras.models.Model(inputs, nn, name=model_name)
     add_pre_post_process(model, rescale_mode="torch")
     reload_model_weights(model, PRETRAINED_DICT, "coatnet", pretrained, MultiHeadRelativePositionalEmbedding)

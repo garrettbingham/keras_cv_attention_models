@@ -30,7 +30,7 @@ PRETRAINED_DICT = {
 
 
 def multi_head_self_attention(
-    inputs, num_heads=4, key_dim=0, out_shape=None, out_weight=True, qkv_bias=False, out_bias=False, attn_dropout=0, output_dropout=0, name=None
+    inputs, num_heads=4, key_dim=0, out_shape=None, out_weight=True, qkv_bias=False, out_bias=False, attn_dropout=0, output_dropout=0, name=None,
 ):
     _, hh, ww, cc = inputs.shape
     key_dim = key_dim if key_dim > 0 else cc // num_heads
@@ -46,12 +46,12 @@ def multi_head_self_attention(
     key = tf.transpose(tf.reshape(key, [-1, key.shape[1], num_heads, key_dim]), [0, 2, 3, 1])  # [batch, num_heads, key_dim, hh * ww]
     value = tf.transpose(tf.reshape(value, [-1, value.shape[1], num_heads, vv_dim]), [0, 2, 1, 3])  # [batch, num_heads, hh * ww, vv_dim]
 
-    attention_scores = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]))([query, key]) * qk_scale  # [batch, num_heads, hh * ww, hh * ww]
+    attention_scores = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]), name=name and name + 'tf.matmul')([query, key]) * qk_scale  # [batch, num_heads, hh * ww, hh * ww]
     attention_scores = keras.layers.Softmax(axis=-1, name=name and name + "attention_scores")(attention_scores)
     attention_scores = keras.layers.Dropout(attn_dropout, name=name and name + "attn_drop")(attention_scores) if attn_dropout > 0 else attention_scores
 
     # value = [batch, num_heads, hh * ww, vv_dim], attention_output = [batch, num_heads, hh * ww, vv_dim]
-    attention_output = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]))([attention_scores, value])
+    attention_output = keras.layers.Lambda(lambda xx: tf.matmul(xx[0], xx[1]), name=name and name + 'tf.matmul_1')([attention_scores, value])
     attention_output = tf.transpose(attention_output, perm=[0, 2, 1, 3])
     attention_output = tf.reshape(attention_output, [-1, inputs.shape[1], inputs.shape[2], num_heads * vv_dim])
     # print(f">>>> {attention_output.shape = }, {attention_scores.shape = }")

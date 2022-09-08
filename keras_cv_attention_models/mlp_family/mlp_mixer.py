@@ -22,33 +22,33 @@ def layer_norm(inputs, name=None):
     return keras.layers.LayerNormalization(axis=norm_axis, epsilon=BATCH_NORM_EPSILON, name=name)(inputs)
 
 
-def mlp_block(inputs, hidden_dim, output_channel=-1, drop_rate=0, use_conv=False, activation="gelu", name=None):
+def mlp_block(inputs, hidden_dim, output_channel=-1, drop_rate=0, use_conv=False, activation="gelu", name=None, kernel_initializer=None):
     output_channel = output_channel if output_channel > 0 else inputs.shape[-1]
     if use_conv:
-        nn = keras.layers.Conv2D(hidden_dim, kernel_size=1, use_bias=True, name=name and name + "Conv_0")(inputs)
+        nn = keras.layers.Conv2D(hidden_dim, kernel_size=1, use_bias=True, name=name and name + "Conv_0", kernel_initializer=kernel_initializer)(inputs)
     else:
-        nn = keras.layers.Dense(hidden_dim, name=name and name + "Dense_0")(inputs)
+        nn = keras.layers.Dense(hidden_dim, name=name and name + "Dense_0", kernel_initializer=kernel_initializer)(inputs)
     nn = activation_by_name(nn, activation, name=name)
     nn = keras.layers.Dropout(drop_rate)(nn) if drop_rate > 0 else nn
     if use_conv:
-        nn = keras.layers.Conv2D(output_channel, kernel_size=1, use_bias=True, name=name and name + "Conv_1")(nn)
+        nn = keras.layers.Conv2D(output_channel, kernel_size=1, use_bias=True, name=name and name + "Conv_1", kernel_initializer=kernel_initializer)(nn)
     else:
-        nn = keras.layers.Dense(output_channel, name=name and name + "Dense_1")(nn)
+        nn = keras.layers.Dense(output_channel, name=name and name + "Dense_1", kernel_initializer=kernel_initializer)(nn)
     nn = keras.layers.Dropout(drop_rate)(nn) if drop_rate > 0 else nn
     return nn
 
 
-def mixer_block(inputs, tokens_mlp_dim, channels_mlp_dim, drop_rate=0, activation="gelu", name=None):
+def mixer_block(inputs, tokens_mlp_dim, channels_mlp_dim, drop_rate=0, activation="gelu", name=None, kernel_initializer=None):
     nn = layer_norm(inputs, name=name and name + "LayerNorm_0")
     nn = keras.layers.Permute((2, 1), name=name and name + "permute_0")(nn)
-    nn = mlp_block(nn, tokens_mlp_dim, activation=activation, name=name and name + "token_mixing/")
+    nn = mlp_block(nn, tokens_mlp_dim, activation=activation, name=name and name + "token_mixing/", kernel_initializer=kernel_initializer)
     nn = keras.layers.Permute((2, 1), name=name and name + "permute_1")(nn)
     if drop_rate > 0:
         nn = keras.layers.Dropout(drop_rate, noise_shape=(None, 1, 1), name=name and name + "token_drop")(nn)
     token_out = keras.layers.Add(name=name and name + "add_0")([nn, inputs])
 
     nn = layer_norm(token_out, name=name and name + "LayerNorm_1")
-    channel_out = mlp_block(nn, channels_mlp_dim, activation=activation, name=name and name + "channel_mixing/")
+    channel_out = mlp_block(nn, channels_mlp_dim, activation=activation, name=name and name + "channel_mixing/", kernel_initializer=kernel_initializer)
     if drop_rate > 0:
         channel_out = keras.layers.Dropout(drop_rate, noise_shape=(None, 1, 1), name=name and name + "channel_drop")(channel_out)
     return keras.layers.Add(name=name and name + "output")([channel_out, token_out])
@@ -69,24 +69,25 @@ def MLPMixer(
     classifier_activation="softmax",
     pretrained="imagenet",
     model_name="mlp_mixer",
+    kernel_initializer=None,
     kwargs=None,
 ):
     inputs = keras.Input(input_shape)
-    nn = keras.layers.Conv2D(stem_width, kernel_size=patch_size, strides=patch_size, padding="same", name="stem")(inputs)
+    nn = keras.layers.Conv2D(stem_width, kernel_size=patch_size, strides=patch_size, padding="same", name="stem", kernel_initializer=kernel_initializer)(inputs)
     nn = keras.layers.Reshape([nn.shape[1] * nn.shape[2], stem_width])(nn)
 
     drop_connect_s, drop_connect_e = drop_connect_rate if isinstance(drop_connect_rate, (list, tuple)) else [drop_connect_rate, drop_connect_rate]
     for ii in range(num_blocks):
         name = "{}_{}/".format("MixerBlock", str(ii))
         block_drop_rate = drop_connect_s + (drop_connect_e - drop_connect_s) * ii / num_blocks
-        nn = mixer_block(nn, tokens_mlp_dim, channels_mlp_dim, drop_rate=block_drop_rate, activation=activation, name=name)
+        nn = mixer_block(nn, tokens_mlp_dim, channels_mlp_dim, drop_rate=block_drop_rate, activation=activation, name=name, kernel_initializer=kernel_initializer)
     nn = layer_norm(nn, name="pre_head_layer_norm")
 
     if num_classes > 0:
         nn = keras.layers.GlobalAveragePooling1D()(nn)  # tf.reduce_mean(nn, axis=1)
         if dropout > 0 and dropout < 1:
             nn = keras.layers.Dropout(dropout)(nn)
-        nn = keras.layers.Dense(num_classes, dtype="float32", activation=classifier_activation, name="head")(nn)
+        nn = keras.layers.Dense(num_classes, dtype="float32", activation=classifier_activation, name="head", kernel_initializer=kernel_initializer)(nn)
 
     if sam_rho != 0:
         from keras_cv_attention_models.model_surgery import SAMModel
@@ -100,6 +101,13 @@ def MLPMixer(
 
 
 BLOCK_CONFIGS = {
+    "tiny": {
+        "num_blocks": 12,
+        "patch_size": 16,
+        "stem_width": 256,
+        "tokens_mlp_dim": 128,
+        "channels_mlp_dim": 1024,
+    },
     "s32": {
         "num_blocks": 8,
         "patch_size": 32,
@@ -150,6 +158,9 @@ BLOCK_CONFIGS = {
         "channels_mlp_dim": 5120,
     },
 }
+
+def MLPMixerTiny(input_shape=(224, 224, 3), num_classes=1000, activation="gelu", classifier_activation="softmax", pretrained="imagenet", **kwargs):
+    return MLPMixer(**BLOCK_CONFIGS["tiny"], **locals(), model_name="mlp_mixer_tiny", **kwargs)
 
 
 def MLPMixerS32(input_shape=(224, 224, 3), num_classes=1000, activation="gelu", classifier_activation="softmax", pretrained="imagenet", **kwargs):

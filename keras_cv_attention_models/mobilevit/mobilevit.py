@@ -41,13 +41,13 @@ PRETRAINED_DICT = {
 }
 
 
-def bottle_in_linear_out_block(inputs, out_channel, strides=1, expand_ratio=4, use_shortcut=False, drop_rate=0, activation="swish", name=""):
+def bottle_in_linear_out_block(inputs, out_channel, strides=1, expand_ratio=4, use_shortcut=False, drop_rate=0, activation="swish", name="", kernel_initializer=None):
     hidden_dim = int(inputs.shape[-1] * expand_ratio)
-    deep = conv2d_no_bias(inputs, hidden_dim, kernel_size=1, strides=1, name=name + "deep_1_")
+    deep = conv2d_no_bias(inputs, hidden_dim, kernel_size=1, strides=1, name=name + "deep_1_", kernel_initializer=kernel_initializer)
     deep = batchnorm_with_activation(deep, activation=activation, name=name + "deep_1_")
-    deep = depthwise_conv2d_no_bias(deep, kernel_size=3, strides=strides, padding="SAME", name=name + "deep_2_")
+    deep = depthwise_conv2d_no_bias(deep, kernel_size=3, strides=strides, padding="SAME", name=name + "deep_2_", kernel_initializer=kernel_initializer)
     deep = batchnorm_with_activation(deep, activation=activation, name=name + "deep_2_")
-    deep = conv2d_no_bias(deep, out_channel, kernel_size=1, strides=1, name=name + "deep_3_")
+    deep = conv2d_no_bias(deep, out_channel, kernel_size=1, strides=1, name=name + "deep_3_", kernel_initializer=kernel_initializer)
     deep = batchnorm_with_activation(deep, activation=None, name=name + "deep_3_")
     deep = drop_block(deep, drop_rate=drop_rate, name=name + "deep_")
 
@@ -55,9 +55,9 @@ def bottle_in_linear_out_block(inputs, out_channel, strides=1, expand_ratio=4, u
     return out
 
 
-def linear_self_attention(inputs, qkv_bias=False, out_bias=False, attn_axis=2, attn_dropout=0, name=None):
+def linear_self_attention(inputs, qkv_bias=False, out_bias=False, attn_axis=2, attn_dropout=0, name=None, kernel_initializer=None):
     input_channel = inputs.shape[-1]
-    qkv = conv2d_no_bias(inputs, 1 + input_channel * 2, kernel_size=1, use_bias=qkv_bias, name=name and name + "qkv_")
+    qkv = conv2d_no_bias(inputs, 1 + input_channel * 2, kernel_size=1, use_bias=qkv_bias, name=name and name + "qkv_", kernel_initializer=kernel_initializer)
     query, key, value = tf.split(qkv, [1, input_channel, input_channel], axis=-1)
     context_score = keras.layers.Softmax(axis=attn_axis, name=name and name + "attention_scores")(query)  # on patch_hh * patch_ww dimension
     context_score = keras.layers.Dropout(attn_dropout, name=name and name + "attn_drop")(context_score) if attn_dropout > 0 else context_score
@@ -66,8 +66,11 @@ def linear_self_attention(inputs, qkv_bias=False, out_bias=False, attn_axis=2, a
     context_vector = keras.layers.Multiply()([key, context_score])  # [batch, height, width, input_channel]
     context_vector = tf.reduce_sum(context_vector, keepdims=True, axis=attn_axis)  # on patch_hh * patch_ww dimension
 
-    out = tf.nn.relu(value) * context_vector
-    out = conv2d_no_bias(out, input_channel, kernel_size=1, use_bias=out_bias, name=name and name + "output")
+    # out = tf.nn.relu(value) * context_vector
+    rectified_values = tf.nn.relu(value)
+    # context_vector = tf.repeat(context_vector, repeats=rectified_values.shape[attn_axis], axis=attn_axis) # works, but OOM
+    out = keras.layers.Lambda(lambda xx : xx[0] * xx[1], name=name and name + "tf.math.multiply")([rectified_values, context_vector])
+    out = conv2d_no_bias(out, input_channel, kernel_size=1, use_bias=out_bias, name=name and name + "output", kernel_initializer=kernel_initializer)
     return out
 
 
@@ -85,11 +88,12 @@ def mhsa_mlp_block(
     drop_rate=0,
     layer_scale=-1,
     activation="gelu",
+    kernel_initializer=None,
     name=None,
 ):
     attn = group_norm(inputs, groups=num_norm_groups, name=name + "attn_") if num_norm_groups > 0 else layer_norm(inputs, name=name + "attn_")
     if use_linear_attention:  # V2
-        attn = linear_self_attention(attn, qkv_bias=qkv_bias, out_bias=True, attn_dropout=attn_drop_rate, name=name and name + "attn_mhsa_")
+        attn = linear_self_attention(attn, qkv_bias=qkv_bias, out_bias=True, attn_dropout=attn_drop_rate, name=name and name + "attn_mhsa_", kernel_initializer=kernel_initializer)
     else:  # V1
         attn = multi_head_self_attention(attn, num_heads, qkv_bias=qkv_bias, out_bias=True, attn_dropout=attn_drop_rate, name=name and name + "attn_mhsa_")
     attn = ChannelAffine(use_bias=False, weight_init_value=layer_scale, name=name and name + "1_gamma")(attn) if layer_scale >= 0 else attn
@@ -97,13 +101,13 @@ def mhsa_mlp_block(
     attn_out = keras.layers.Add(name=name and name + "attn_out")([inputs, attn])
 
     mlp = group_norm(attn_out, groups=num_norm_groups, name=name + "mlp_") if num_norm_groups > 0 else layer_norm(attn_out, name=name + "mlp_")
-    mlp = mlp_block(mlp, int(out_channel * mlp_ratio), drop_rate=mlp_drop_rate, use_conv=use_conv_mlp, activation=activation, name=name and name + "mlp_")
+    mlp = mlp_block(mlp, int(out_channel * mlp_ratio), drop_rate=mlp_drop_rate, use_conv=use_conv_mlp, activation=activation, name=name and name + "mlp_", kernel_initializer=kernel_initializer)
     mlp = ChannelAffine(use_bias=False, weight_init_value=layer_scale, name=name and name + "2_gamma")(mlp) if layer_scale >= 0 else mlp
     mlp = drop_block(mlp, drop_rate=drop_rate, name=name and name + "mlp_")
     return keras.layers.Add(name=name and name + "output")([attn_out, mlp])
 
 
-def transformer_pre_process(inputs, out_channel, patch_size=2, resize_first=False, use_depthwise=False, patches_to_batch=True, activation="swish", name=""):
+def transformer_pre_process(inputs, out_channel, patch_size=2, resize_first=False, use_depthwise=False, patches_to_batch=True, activation="swish", name="", kernel_initializer=None):
     nn = inputs
 
     if resize_first:  # V2
@@ -113,11 +117,11 @@ def transformer_pre_process(inputs, out_channel, patch_size=2, resize_first=Fals
             nn = tf.image.resize(nn, [patch_hh * patch_size, patch_ww * patch_size], method="bilinear")
 
     if use_depthwise:  # V2
-        nn = depthwise_conv2d_no_bias(nn, kernel_size=3, strides=1, padding="SAME", name=name + "pre_1_")
+        nn = depthwise_conv2d_no_bias(nn, kernel_size=3, strides=1, padding="SAME", name=name + "pre_1_", kernel_initializer=kernel_initializer)
     else:  # V1
-        nn = conv2d_no_bias(nn, nn.shape[-1], kernel_size=3, strides=1, padding="SAME", name=name + "pre_1_")
+        nn = conv2d_no_bias(nn, nn.shape[-1], kernel_size=3, strides=1, padding="SAME", name=name + "pre_1_", kernel_initializer=kernel_initializer)
     nn = batchnorm_with_activation(nn, activation=activation, name=name + "pre_1_")
-    nn = conv2d_no_bias(nn, out_channel, kernel_size=1, strides=1, name=name + "pre_2_")
+    nn = conv2d_no_bias(nn, out_channel, kernel_size=1, strides=1, name=name + "pre_2_", kernel_initializer=kernel_initializer)
 
     if not resize_first:  # V1
         patch_hh, patch_ww = int(tf.math.ceil(nn.shape[1] / patch_size)), int(tf.math.ceil(nn.shape[2] / patch_size))
@@ -138,7 +142,7 @@ def transformer_pre_process(inputs, out_channel, patch_size=2, resize_first=Fals
     return nn
 
 
-def transformer_post_process(inputs, pre_attn, out_channel, patch_size=2, patch_height=-1, activation="swish", name=""):
+def transformer_post_process(inputs, pre_attn, out_channel, patch_size=2, patch_height=-1, activation="swish", name="", kernel_initializer=None):
     if patch_height == -1:  # V1, [batch * 4, height // 2, width // 2, channel]
         patch_hh, patch_ww, channel = inputs.shape[1], inputs.shape[2], inputs.shape[-1]
     else:  # V2, [batch, 4, height // 2 * width // 2, channel]
@@ -156,11 +160,11 @@ def transformer_post_process(inputs, pre_attn, out_channel, patch_size=2, patch_
         nn = tf.image.resize(nn, [pre_attn.shape[1], pre_attn.shape[2]], method="bilinear")
     # print(f"transformer_post_process after resize: {nn.shape = }")
 
-    nn = conv2d_no_bias(nn, out_channel, kernel_size=1, strides=1, name=name + "post_1_")
+    nn = conv2d_no_bias(nn, out_channel, kernel_size=1, strides=1, name=name + "post_1_", kernel_initializer=kernel_initializer)
     nn = batchnorm_with_activation(nn, activation=activation, name=name + "post_1_")
     if pre_attn is not None:  # V1
         nn = tf.concat([pre_attn, nn], axis=-1)
-        nn = conv2d_no_bias(nn, out_channel, kernel_size=3, strides=1, padding="SAME", name=name + "post_2_")
+        nn = conv2d_no_bias(nn, out_channel, kernel_size=3, strides=1, padding="SAME", name=name + "post_2_", kernel_initializer=kernel_initializer)
         nn = batchnorm_with_activation(nn, activation=activation, name=name + "post_2_")
     return nn
 
@@ -191,10 +195,11 @@ def MobileViT(
     dropout=0,
     pretrained=None,
     model_name="mobilevit",
+    kernel_initializer=None,
     kwargs=None,
 ):
     inputs = keras.layers.Input(input_shape)
-    nn = conv2d_no_bias(inputs, stem_width, kernel_size=3, strides=2, padding="same", name="stem_")
+    nn = conv2d_no_bias(inputs, stem_width, kernel_size=3, strides=2, padding="same", name="stem_", kernel_initializer=kernel_initializer)
     nn = batchnorm_with_activation(nn, activation=activation, name="stem_")
 
     # Save line width
@@ -223,18 +228,18 @@ def MobileViT(
             block_drop_rate = drop_connect_rate * global_block_id / total_blocks
             global_block_id += 1
             if is_conv_block or block_id == 0:  # First transformer block is also a conv block .
-                nn = bottle_in_linear_out_block(nn, out_channel, stride, expand_ratio, use_shortcut, block_drop_rate, activation=activation, name=name)
+                nn = bottle_in_linear_out_block(nn, out_channel, stride, expand_ratio, use_shortcut, block_drop_rate, activation=activation, name=name, kernel_initializer=kernel_initializer)
             else:
                 if block_id == 1:  # pre
                     pre_attn = nn if use_fusion else None
                     patch_height = -1 if patches_to_batch else int(tf.math.ceil(nn.shape[1] / patch_size))
-                    nn = transformer_pre_process(nn, attn_channel, patch_size, resize_first, use_depthwise, patches_to_batch, activation=activation, name=name)
-                nn = mhsa_mlp_block(nn, attn_channel, layer_scale=layer_scale, **mhsa_mlp_block_common_kwargs, name=name)
+                    nn = transformer_pre_process(nn, attn_channel, patch_size, resize_first, use_depthwise, patches_to_batch, activation=activation, name=name, kernel_initializer=kernel_initializer)
+                nn = mhsa_mlp_block(nn, attn_channel, layer_scale=layer_scale, **mhsa_mlp_block_common_kwargs, name=name, kernel_initializer=kernel_initializer)
                 if block_id == num_block - 1:  # post
                     nn = group_norm(nn, groups=num_norm_groups, name=name + "post_") if num_norm_groups > 0 else layer_norm(nn, name=name + "post_")
-                    nn = transformer_post_process(nn, pre_attn, out_channel, patch_size, patch_height, activation=post_activation, name=name)
+                    nn = transformer_post_process(nn, pre_attn, out_channel, patch_size, patch_height, activation=post_activation, name=name, kernel_initializer=kernel_initializer)
 
-    nn = output_block(nn, output_num_features, activation, num_classes, drop_rate=dropout, classifier_activation=classifier_activation)
+    nn = output_block(nn, output_num_features, activation, num_classes, drop_rate=dropout, classifier_activation=classifier_activation, kernel_initializer=kernel_initializer)
     model = keras.models.Model(inputs, nn, name=model_name)
     add_pre_post_process(model, rescale_mode="raw01")
     reload_model_weights(model, PRETRAINED_DICT, "mobilevit", pretrained)
