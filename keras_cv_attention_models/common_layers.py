@@ -67,6 +67,12 @@ def activation_by_name(inputs, activation="relu", name=None):
         return tf.nn.gelu(inputs, approximate=True, name=layer_name)
     elif activation.lower() == ("hard_sigmoid_torch"):
         return keras.layers.Activation(activation=hard_sigmoid_torch, name=layer_name)(inputs)
+    elif '(x)' in activation:
+        import os, sys
+        WORKSPACE_PATH = os.path.join('/', 'home', 'garrett', 'workspace')
+        sys.path.append(WORKSPACE_PATH)
+        from notferratu.activations.dag import ActivationFunction
+        return ActivationFunction(activation)(inputs)
     else:
         return keras.layers.Activation(activation=activation, name=layer_name)(inputs)
 
