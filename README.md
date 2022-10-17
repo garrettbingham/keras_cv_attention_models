@@ -27,6 +27,7 @@
   - [GCViT](#gcvit)
   - [GMLP](#gmlp)
   - [HaloNet](#halonet)
+  - [HorNet](#hornet)
   - [LCNet](#lcnet)
   - [LeViT](#levit)
   - [MLP mixer](#mlp-mixer)
@@ -63,7 +64,7 @@
 
 # General Usage
 ## Basic
-  - **Currently recommended TF version is `tensorflow==2.8.0`. Expecially for training or TFLite conversion**.
+  - **Currently recommended TF version is `tensorflow==2.10.0`. Expecially for training or TFLite conversion**.
   - **Default import**
     ```py
     import os
@@ -109,7 +110,16 @@
     print(mm.decode_predictions(preds))
     # [[('n02124075', 'Egyptian_cat', 0.9653769), ('n02123159', 'tiger_cat', 0.018427467), ...]
     ```
-  - **Exclude model top layers by set `num_classes=0`**
+  - **`num_classes={custom output classes}`** others than `1000` or `0` will just skip loading the header Dense layer weights. As `model.load_weights(weight_file, by_name=True, skip_mismatch=True)` is used for loading weights.
+    ```py
+    from keras_cv_attention_models import swin_transformer_v2
+
+    mm = swin_transformer_v2.SwinTransformerV2Tiny_window8(num_classes=64)
+    # >>>> Load pretrained from: ~/.keras/models/swin_transformer_v2_tiny_window8_256_imagenet.h5
+    # WARNING:tensorflow:Skipping loading weights for layer #601 (named predictions) due to mismatch in shape for weight predictions/kernel:0. Weight expects shape (768, 64). Received saved weight with shape (768, 1000)
+    # WARNING:tensorflow:Skipping loading weights for layer #601 (named predictions) due to mismatch in shape for weight predictions/bias:0. Weight expects shape (64,). Received saved weight with shape (1000,)
+    ```
+  - **`num_classes=0`** set for excluding model top `GlobalAveragePooling2D + Dense` layers.
     ```py
     from keras_cv_attention_models import resnest
     mm = resnest.ResNest50(num_classes=0)
@@ -544,11 +554,11 @@
 
   | Model        | Params | FLOPs | Input | Top1 Acc | Download |
   | ------------ | ------ | ----- | ----- | -------- | -------- |
-  | GCViT_XXTiny | 12.0M  | 2.15G | 224   | 79.6     |          |
-  | GCViT_XTiny  | 20.0M  | 2.96G | 224   | 81.9     |          |
-  | GCViT_Tiny   | 28.2M  | 4.83G | 224   | 83.2     | [gcvit_tiny_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_tiny_224_imagenet.h5) |
-  | GCViT_Small  | 51.1M  | 8.63G | 224   | 83.9     | [gcvit_small_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_small_224_imagenet.h5) |
-  | GCViT_Base   | 90.3M  | 14.9G | 224   | 84.4     | [gcvit_base_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_base_224_imagenet.h5) |
+  | GCViT_XXTiny | 12.0M  | 2.15G | 224   | 79.8     | [gcvit_xx_tiny_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_xx_tiny_224_imagenet.h5) |
+  | GCViT_XTiny  | 20.0M  | 2.96G | 224   | 82.04    | [gcvit_x_tiny_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_x_tiny_224_imagenet.h5) |
+  | GCViT_Tiny   | 28.2M  | 4.83G | 224   | 83.4     | [gcvit_tiny_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_tiny_224_imagenet.h5) |
+  | GCViT_Small  | 51.1M  | 8.63G | 224   | 83.95    | [gcvit_small_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_small_224_imagenet.h5) |
+  | GCViT_Base   | 90.3M  | 14.9G | 224   | 84.47    | [gcvit_base_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/gcvit/gcvit_base_224_imagenet.h5) |
 ## GMLP
   - [Keras GMLP](https://github.com/leondgarse/keras_cv_attention_models/tree/main/keras_cv_attention_models/mlp_family#gmlp) includes implementation of [PDF 2105.08050 Pay Attention to MLPs](https://arxiv.org/pdf/2105.08050.pdf).
 
@@ -577,6 +587,20 @@
   | HaloRegNetZB   | 11.68M | 1.97G   | 224   | 81.042   | [haloregnetz_b_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/halonet/haloregnetz_b_224_imagenet.h5) |
   | HaloNet50T     | 22.7M  | 5.29G   | 256   | 81.70    | [halonet50t_256_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/halonet/halonet50t_256_imagenet.h5) |
   | HaloBotNet50T  | 22.6M  | 5.02G   | 256   | 82.0     | [halobotnet50t_256_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/halonet/halobotnet50t_256_imagenet.h5) |
+## HorNet
+  - [Keras HorNet](https://github.com/leondgarse/keras_cv_attention_models/tree/main/keras_cv_attention_models/hornet) is for [PDF 2207.14284 HorNet: Efficient High-Order Spatial Interactions with Recursive Gated Convolutions](https://arxiv.org/pdf/2207.14284.pdf).
+
+  | Model         | Params | FLOPs  | Input | Top1 Acc | Download |
+  | ------------- | ------ | ------ | ----- | -------- | -------- |
+  | HorNetTiny    | 22.4M  | 4.01G  | 224   | 82.8     | [hornet_tiny_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_tiny_224_imagenet.h5) |
+  | HorNetTinyGF  | 23.0M  | 3.94G  | 224   | 83.0     | [hornet_tiny_gf_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_tiny_gf_224_imagenet.h5) |
+  | HorNetSmall   | 49.5M  | 8.87G  | 224   | 83.8     | [hornet_small_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_small_224_imagenet.h5) |
+  | HorNetSmallGF | 50.4M  | 8.77G  | 224   | 84.0     | [hornet_small_gf_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_small_gf_224_imagenet.h5) |
+  | HorNetBase    | 87.3M  | 15.65G | 224   | 84.2     | [hornet_base_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_base_224_imagenet.h5) |
+  | HorNetBaseGF  | 88.4M  | 15.51G | 224   | 84.3     | [hornet_base_gf_224_imagenet.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_base_gf_224_imagenet.h5) |
+  | HorNetLarge   | 194.5M | 34.91G | 224   | 86.8     | [hornet_large_224_imagenet22k.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_large_224_imagenet22k.h5) |
+  | HorNetLargeGF | 196.3M | 34.72G | 224   | 87.0     | [hornet_large_gf_224_imagenet22k.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_large_gf_224_imagenet22k.h5) |
+  | HorNetLargeGF | 201.8M | 102.0G | 384   | 87.7     | [hornet_large_gf_384_imagenet22k.h5](https://github.com/leondgarse/keras_cv_attention_models/releases/download/hornet/hornet_large_gf_384_imagenet22k.h5) |
 ## LCNet
   - [Keras LCNet](https://github.com/leondgarse/keras_cv_attention_models/tree/main/keras_cv_attention_models/mobilenetv3_family#lcnet) includes implementation of [PDF 2109.15099 PP-LCNet: A Lightweight CPU Convolutional Neural Network](https://arxiv.org/pdf/2109.15099.pdf).
 

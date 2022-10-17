@@ -64,7 +64,7 @@ def load_weights_with_mismatch(model, weight_file, mismatch_class=None, request_
                     # ss = {ww.decode().split("/")[-1] : tf.convert_to_tensor(ss[ww]) for ww in ss.attrs['weight_names']}
                     ss = {ww.decode("utf8") if hasattr(ww, "decode") else ww: tf.convert_to_tensor(ss[ww]) for ww in ss.attrs["weight_names"]}
                     ss = {kk.split("/")[-1]: vv for kk, vv in ss.items()}
-                    model.get_layer(ii.name).load_resized_pos_emb(ss, method=method)
+                    model.get_layer(ii.name).load_resized_weights(ss, method=method)
             ff.close()
 
         # print(">>>> Reload mismatched PositionalEmbedding weights: {} -> {}".format(request_resolution, input_shape[0]))
@@ -72,7 +72,7 @@ def load_weights_with_mismatch(model, weight_file, mismatch_class=None, request_
         # for ii in model.layers:
         #     if isinstance(ii, mismatch_class):
         #         print(">>>> Reload layer:", ii.name)
-        #         model.get_layer(ii.name).load_resized_pos_emb(bb.get_layer(ii.name))
+        #         model.get_layer(ii.name).load_resized_weights(bb.get_layer(ii.name))
         except:
             print("[Error] something went wrong in load_weights_with_mismatch")
             pass
@@ -81,7 +81,10 @@ def load_weights_with_mismatch(model, weight_file, mismatch_class=None, request_
 def state_dict_stack_by_layer(state_dict, skip_weights=["num_batches_tracked"], unstack_weights=[]):
     stacked_state_dict = {}
     for kk, vv in state_dict.items():
-        split_kk = kk.split(".")
+        if kk[-2] == ":":
+            kk = kk[:-2]  # Keras weight name like "..../weight:0"
+        split_token = "/" if "/" in kk else "."
+        split_kk = kk.split(split_token)
         vv = vv.numpy() if hasattr(vv, "numpy") else vv
         if split_kk[-1] in skip_weights:
             continue
@@ -90,7 +93,7 @@ def state_dict_stack_by_layer(state_dict, skip_weights=["num_batches_tracked"], 
             stacked_state_dict[kk] = [vv]
         else:
             # split_kk[-1] in ["weight", "bias", "running_mean", "running_var", "gain"]
-            layer_name = ".".join(split_kk[:-1])
+            layer_name = split_token.join(split_kk[:-1])
             stacked_state_dict.setdefault(layer_name, []).append(vv)
     return stacked_state_dict
 

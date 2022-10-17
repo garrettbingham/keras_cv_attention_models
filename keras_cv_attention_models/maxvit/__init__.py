@@ -1,12 +1,11 @@
-from keras_cv_attention_models.gcvit.gcvit import GCViT, GCViT_XXTiny, GCViT_XTiny, GCViT_Tiny, GCViT_Small, GCViT_Base
+from keras_cv_attention_models.maxvit.maxvit import MaxViT, MaxViT_T, MaxViT_S, MaxViT_B, MaxViT_L, MaxViT_XL
 
 __head_doc__ = """
-Keras implementation of [Github NVlabs/GCVit](https://github.com/NVlabs/GCVit).
-Paper [PDF 2206.09959 Global Context Vision Transformers](https://arxiv.org/pdf/2206.09959.pdf).
+Keras implementation of [Github google-research/maxvit](https://github.com/google-research/maxvit).
+Paper [PDF 2204.01697 MaxViT: Multi-Axis Vision Transformer](https://arxiv.org/pdf/2204.01697.pdf).
 """
 
-__tail_doc__ = """  window_ratios: window split ratio. Each stack will calculate `window_size = (height // window_ratio, width // window_ratio)` .
-  layer_scale: layer scale init value. Default `-1` means not applying, any value `>=0` will add a scale value for each block output.
+__tail_doc__ = """  layer_scale: layer scale init value. Default `-1` means not applying, any value `>=0` will add a scale value for each block output.
       [Going deeper with Image Transformers](https://arxiv.org/pdf/2103.17239.pdf).
   input_shape: it should have exactly 3 inputs channels, like `(224, 224, 3)`.
   num_classes: number of classes to classify images into. Set `0` to exclude top layers.
@@ -25,29 +24,24 @@ Returns:
     A `keras.Model` instance.
 """
 
-GCViT.__doc__ = __head_doc__ + """
+MaxViT.__doc__ = __head_doc__ + """
 Args:
   num_blocks: number of blocks in each stack.
-  num_heads: num heads for each stack.
   embed_dim: basic hidden dims, expand * 2 for each stack.
   mlp_ratio: expand ratio for mlp blocks hidden channel.
   model_name: string, model name.
 """ + __tail_doc__ + """
 Model architectures:
-  | Model        | Params | FLOPs | Input | Top1 Acc |
-  | ------------ | ------ | ----- | ----- | -------- |
-  | GCViT_XXTiny | 12.0M  | 2.15G | 224   | 79.8     |
-  | GCViT_XTiny  | 20.0M  | 2.96G | 224   | 82.04    |
-  | GCViT_Tiny   | 28.2M  | 4.83G | 224   | 83.4     |
-  | GCViT_Small  | 51.1M  | 8.63G | 224   | 83.95    |
-  | GCViT_Base   | 90.3M  | 14.9G | 224   | 84.47    |
+  | Model         | Params | FLOPs  | Input | Top1 Acc |
+  | ------------- | ------ | ------ | ----- | -------- |
+  | MaxViT_T      | 31M    | 5.6G   | 224   | 83.62    |
 """
 
-GCViT_XXTiny.__doc__ = __head_doc__ + """
+MaxViT_T.__doc__ = __head_doc__ + """
 Args:
 """ + __tail_doc__
 
-GCViT_XTiny.__doc__ = GCViT_XXTiny.__doc__
-GCViT_Tiny.__doc__ = GCViT_XXTiny.__doc__
-GCViT_Small.__doc__ = GCViT_XXTiny.__doc__
-GCViT_Base.__doc__ = GCViT_XXTiny.__doc__
+MaxViT_S.__doc__ = MaxViT_T.__doc__
+MaxViT_B.__doc__ = MaxViT_T.__doc__
+MaxViT_L.__doc__ = MaxViT_T.__doc__
+MaxViT_XL.__doc__ = MaxViT_T.__doc__
