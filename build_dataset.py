@@ -40,6 +40,9 @@ ALL_KEYS = [
 
 
 def get_eigenvalue_cdf(afn_name, model_name):
+    # Set seed for reproducibility
+    tf.random.set_seed(42)
+    np.random.seed(42)
     assert model_name == 'mobilevit.MobileViT_V2_050', 'Only MobileViT_V2_050 is supported'
 
     try:
@@ -94,7 +97,8 @@ def get_eigenvalue_cdf(afn_name, model_name):
         samples, labels = next(iter(train_dataset))
         fim = FIM(model, samples, labels, loss)
         eigenvalues = fim.calculate_eigenvalues(log_scale=True)
-        eigenvalues = np.array([e for eigs in eigenvalues for e in eigs]).flatten()
+        print('Not flattening the eigenvalues!')
+        # eigenvalues = np.array([e for eigs in eigenvalues for e in eigs]).flatten()
 
         BINS = np.linspace(-100, 100, 1000+1)
         pdf, _, _ = plt.hist(eigenvalues, bins=BINS, density=True)
@@ -194,10 +198,6 @@ if __name__ == '__main__':
 
     # Get JSON path and choose the keys we care about
     data_path = os.path.join(os.path.expanduser('~'), 'workspace', 'keras_cv_attention_models', 'afn_bench_data', f'{experiment}-{batch}-{num_batches}.json')
-
-
-    # Set seed for reproducibility
-    np.random.seed(0)
 
     # Get the W&B runs that finished successfully
     api = wandb.Api(timeout=99999)
