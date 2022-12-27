@@ -368,7 +368,8 @@ def AotNet(
         nn = keras.layers.GlobalAveragePooling2D(name="avg_pool")(nn)
         if dropout > 0:
             nn = keras.layers.Dropout(dropout, name="head_drop")(nn)
-        nn = keras.layers.Dense(num_classes, dtype="float32", activation=classifier_activation, name="predictions")(nn)
+        nn = keras.layers.Dense(num_classes, dtype="float32", activation=None, name="predictions")(nn)
+        nn = keras.layers.Activation(classifier_activation, name="predictions_activation")(nn)
 
     model = keras.models.Model(inputs, nn, name=model_name)
     add_pre_post_process(model, rescale_mode="torch")
