@@ -189,9 +189,32 @@ def init_model(model=None,
     if autoinit:
         autoinit_signal_variance = autoinit_signal_variance or 1.0
         print(f">>>> Initializing with AutoInit (signal variance {autoinit_signal_variance})")
+        import os, sys
+        WORKSPACE_PATH = os.path.join('/', 'home', 'garrett', 'workspace')
+        sys.path.append(WORKSPACE_PATH)
         from autoinit import AutoInit
         from autoinit.components.weighted_sum import WeightedSum
-        model = AutoInit(signal_variance=autoinit_signal_variance).initialize_model(model, custom_objects={'WeightedSum': WeightedSum})
+        from autoinit.estimators.estimate_layer_output_distribution import LayerOutputDistributionEstimator
+        from notferratu.activations.dag import ActivationFunction
+
+        custom_objects = {
+            'ActivationFunction' : ActivationFunction,
+            'WeightedSum': WeightedSum,
+        }
+
+        class DAGOutputDistributionEstimator(LayerOutputDistributionEstimator):
+            def estimate(self, means_in, vars_in):
+                return self._mapped_distribution(self.layer, means_in[0], vars_in[0])
+
+        custom_distribution_estimators = {ActivationFunction : DAGOutputDistributionEstimator}
+
+        model = AutoInit(
+            signal_variance=autoinit_signal_variance,
+            custom_distribution_estimators=custom_distribution_estimators).initialize_model(
+                model,
+                custom_objects=custom_objects
+        )
+
     return model
 
 
