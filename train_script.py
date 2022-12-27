@@ -5,6 +5,7 @@ import uuid
 import wandb
 from keras_cv_attention_models.imagenet import data, train_func, losses
 
+from database import MobileViT_V2_050_ImageNet_AFD, AotNet50V2_ImageNet_AFD
 
 def parse_arguments(argv):
     import argparse
@@ -15,7 +16,10 @@ def parse_arguments(argv):
     parser.add_argument(
         "-m", "--model", type=str, default="aotnet.AotNet50", help="Model name in format [sub_dir].[model_name]. Or keras.applications name like MobileNet"
     )
+
     parser.add_argument('--activation-fn', type=str, required=False, help='Custom DAG activation function')
+    parser.add_argument('--afn-db', type=str, required=False, help='Activation function database file')
+
     parser.add_argument("-b", "--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("-e", "--epochs", type=int, default=-1, help="Total epochs. Set -1 means using lr_decay_steps + lr_cooldown_steps")
     parser.add_argument("-p", "--optimizer", type=str, default="LAMB", help="Optimizer name. One of [AdamW, LAMB, RMSprop, SGD, SGDW].")
@@ -66,7 +70,7 @@ def parse_arguments(argv):
 
     """ Optimizer arguments like Learning rate, weight decay and momentum """
     lr_group = parser.add_argument_group("Optimizer arguments like Learning rate, weight decay and momentum")
-    lr_group.add_argument("--lr_base_512", type=float, default=8e-3, help="Learning rate for batch_size=512, lr = lr_base_512 * 512 / batch_size")
+    lr_group.add_argument("--lr_base_512", type=float, default=8e-3, help="Learning rate for batch_size=512, lr = lr_base_512 * 512 / batch_size") # this is wrong; it's bs / 512
     lr_group.add_argument(
         "--weight_decay",
         type=float,
@@ -173,8 +177,23 @@ def run_training_by_args(args):
                            name=args.wandb_name,
                            mode=args.wandb_mode,
                            reinit=True)
-
+    
     strategy = train_func.init_global_strategy(args.enable_float16, args.seed, args.TPU)
+    
+    if args.afn_db:
+        # Activation function database
+        if args.model == 'mobilevit.MobileViT_V2_050':
+            afd = MobileViT_V2_050_ImageNet_AFD(args.afn_db)
+        elif args.model == 'aotnet.AotNet50V2':
+            afd = AotNet50V2_ImageNet_AFD(args.afn_db)
+        else:
+            raise ValueError("Only MobileViT_V2_050 and AotNet50V2 are supported for now")
+        afn_name = afd.suggest_fn()
+        print(">>>> Suggested activation function:", afn_name)
+        args.activation_fn = afn_name
+        wandb_run.config.update({'activation_fn': afn_name}, allow_val_change=True)
+        afd.update_for_all_equivalent_fns(afn_name, 'status', 'running')        
+
     batch_size = args.batch_size * strategy.num_replicas_in_sync
     input_shape = (args.input_shape, args.input_shape)
     use_token_label = False if args.token_label_file is None else True
@@ -258,6 +277,19 @@ def run_training_by_args(args):
             )
     except IndexError:
         print(">>>> IndexError")
+
+    if args.afn_db:
+        # Update the status of the activation function to "done"
+        afd.update_for_all_equivalent_fns(afn_name, 'status', 'done')
+        # Update the results of the activation function
+        afd.update_for_all_equivalent_fns(afn_name, 'train_acc', hist.history['acc'][-1])
+        afd.update_for_all_equivalent_fns(afn_name, 'train_loss', hist.history['loss'][-1])
+        afd.update_for_all_equivalent_fns(afn_name, 'val_acc', hist.history['val_acc'][-1])
+        afd.update_for_all_equivalent_fns(afn_name, 'val_loss', hist.history['val_loss'][-1])
+        afd.update_for_all_equivalent_fns(afn_name, 'runtime', wandb_run.summary['_runtime'])
+        afd.update_for_all_equivalent_fns(afn_name, 'WandB_config', str(wandb_run.config))
+        afd.update_for_all_equivalent_fns(afn_name, 'WandB_summary', str(wandb_run.summary))
+
     return model, latest_save, hist
 
 
