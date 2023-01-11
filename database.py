@@ -132,10 +132,10 @@ class AotNet50V2_ImageNet_AFD(ActivationFunctionDatabase):
         train_dataset, test_dataset, total_images, num_classes, steps_per_epoch = data.init_dataset(
             data_name='imagenet2012',
             input_shape=(160, 160, 3),
-            # the batch size was actually 512*2, but we have to reduce it here to account for 
+            # the batch size was actually 512, but we have to reduce it here to account for 
             # the extra memory usage from exposing multiple model outputs, and for using one GPU to
             # calculate FIM even though training uses four
-            batch_size=128, 
+            batch_size=64, 
             mixup_alpha=0.1,
             cutmix_alpha=1.0,
             rescale_mode='torch',
@@ -209,7 +209,7 @@ class AotNet50V2_ImageNet_AFD(ActivationFunctionDatabase):
         model = train_func.compile_model(
             model=model,
             optimizer='AdamW',
-            lr_base=8e-3 * 512 / 128,
+            lr_base=4e-3 * 512 / 64,
             weight_decay=0.02,
             loss=self.loss,
             loss_weights=loss_weights,
