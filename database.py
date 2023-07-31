@@ -9,10 +9,7 @@ import tensorflow as tf
 
 from keras_cv_attention_models.imagenet import data, train_func, losses
 
-# Hacky path manipulation.  Eventually we should make it a proper package.
-WORKSPACE_PATH = os.path.join('/', 'home', 'garrett', 'workspace')
-sys.path.append(WORKSPACE_PATH)
-from afn_bench.database import ActivationFunctionDatabase
+from aquasurf.database import ActivationFunctionDatabase
 
 
 class MobileViT_V2_050_ImageNet_AFD(ActivationFunctionDatabase):
@@ -132,7 +129,7 @@ class AotNet50V2_ImageNet_AFD(ActivationFunctionDatabase):
         train_dataset, test_dataset, total_images, num_classes, steps_per_epoch = data.init_dataset(
             data_name='imagenet2012',
             input_shape=(160, 160, 3),
-            # the batch size was actually 512, but we have to reduce it here to account for 
+            # the batch size was actually 256, but we have to reduce it here to account for 
             # the extra memory usage from exposing multiple model outputs, and for using one GPU to
             # calculate FIM even though training uses four
             batch_size=64, 
